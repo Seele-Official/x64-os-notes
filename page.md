@@ -12,6 +12,10 @@
       - [2MB 页大小转换](#2mb-页大小转换)
       - [1GB 页大小转换](#1gb-页大小转换)
 - [CPUID Support](#cpuid-support)
+- [Access Rights](#access-rights)
+  - [Supervisor-Mode Accesses](#supervisor-mode-accesses)
+  - [User-Mode Accesses](#user-mode-accesses)
+  - [Protection Keys](#protection-keys)
 ----
 
 # OVERVIEW
@@ -51,6 +55,8 @@
 | 5-11  | 保留 (必须为 0)              |
 | 12-63 | 页表基地址 (PML4 的物理地址) |
 
+- 页表基地址: 页表地址的 12-63 位，所以页表必须4kb对齐
+
 
 ### PML4E Page Map Level 4 Entry
 
@@ -88,7 +94,7 @@
 | 29:13    | 保留（必须为0）                                                                  |
 | 51:30    | 此条目映射的1 GB页面的物理地址                                                   |
 | 58:52    | 忽略                                                                             |
-| 62:59    | 保护密钥；如果 CR4.PKE = 1，确定页面的保护密钥（见第4.6.2节），否则忽略          |
+| 62:59    | 保护密钥；如果 CR4.PKE = 1，确定页面的[保护密钥](#protection-keys)，否则忽略          |
 | 63 (XD)  | 如果 IA32_EFER.NXE = 1，执行禁用；否则，保留（必须为0）                          |
 
 > PAT 在所有支持IA-32e paging的处理器中都被支持
@@ -251,3 +257,87 @@
     - **CPUID 检查**：`CPUID.80000008H:EAX[7:0]` 报告处理器支持的物理地址宽度，最大可以为 52 位。
     - **线性地址宽度**：`CPUID.80000008H:EAX[15:8]` 报告处理器支持的线性地址宽度。一般情况下，如果处理器支持长模式（`CPUID.80000001H:EDX.LM`），线性地址宽度为 48 位，否则为 32 位。
 
+# Access Rights
+
+一般来说，线性地址的访问权限有俩种，分别是`supervisor-mode access` 和 `user-mode access`.所有的指令请求和数据权限,都是由当前特权等级 `current privilege level (CPL)` 决定的。
+
+- **CPL < 3**： supervisor-mode accesses
+- **CPL = 3**： user-mode accesses.
+
+mplicit supervisor-mode accesses
+
+explicit supervisor-mode accesses
+
+如果至少一个分页结构条目中的 U/S 标志（位 2）为 0，则该地址为管理员模式地址。否则，该地址为用户模式地址。
+
+下面给出分页模式如何确认访问权限的方式:
+## Supervisor-Mode Accesses
+
+1. **Data Reads from Supervisor-Mode Addresses**
+   - Data may be read (implicitly or explicitly) from any supervisor-mode address.
+
+2. **Data Reads from User-Mode Addresses**
+   - Access rights depend on the value of `CR4.SMAP`:
+     - If `CR4.SMAP = 0`, data may be read from any user-mode address with a protection key for which read access is permitted.
+     - If `CR4.SMAP = 1`, access rights depend on the value of `EFLAGS.AC` and whether the access is implicit or explicit:
+       - If `EFLAGS.AC = 1` and the access is explicit, data may be read from any user-mode address with a protection key for which read access is permitted.
+       - If `EFLAGS.AC = 0` or the access is implicit, data may not be read from any user-mode address.
+     - See Section 4.6.2 for how protection keys are associated with user-mode addresses and permitted accesses for each protection key.
+
+3. **Data Writes to Supervisor-Mode Addresses**
+   - Access rights depend on the value of `CR0.WP`:
+     - If `CR0.WP = 0`, data may be written to any supervisor-mode address.
+     - If `CR0.WP = 1`, data may be written to any supervisor-mode address with a translation where the `R/W` flag (bit 1) is 1 in every paging-structure entry controlling the translation; data may not be written to any supervisor-mode address where the `R/W` flag is 0 in any paging-structure entry controlling the translation.
+
+4. **Data Writes to User-Mode Addresses**
+   - Access rights depend on the values of `CR0.WP` and `CR4.SMAP`:
+     - If `CR0.WP = 0`:
+       - If `CR4.SMAP = 0`, data may be written to any user-mode address with a protection key for which write access is permitted.
+       - If `CR4.SMAP = 1`, access rights depend on the value of `EFLAGS.AC` and whether the access is implicit or explicit:
+         - If `EFLAGS.AC = 1` and the access is explicit, data may be written to any user-mode address with a protection key for which write access is permitted.
+         - If `EFLAGS.AC = 0` or the access is implicit, data may not be written to any user-mode address.
+     - If `CR0.WP = 1`:
+       - If `CR4.SMAP = 0`, data may be written to any user-mode address with a translation where the `R/W` flag is 1 in every paging-structure entry controlling the translation and with a protection key for which write access is permitted; data may not be written to any user-mode address with a translation where the `R/W` flag is 0 in any paging-structure entry controlling the translation.
+       - If `CR4.SMAP = 1`, access rights depend on the value of `EFLAGS.AC` and whether the access is implicit or explicit:
+         - If `EFLAGS.AC = 1` and the access is explicit, data may be written to any user-mode address with a translation where the `R/W` flag is 1 in every paging-structure entry controlling the translation and with a protection key for which write access is permitted; data may not be written to any user-mode address where the `R/W` flag is 0 in any paging-structure entry controlling the translation.
+         - If `EFLAGS.AC = 0` or the access is implicit, data may not be written to any user-mode address.
+
+5. **Instruction Fetches from Supervisor-Mode Addresses**
+   - For 32-bit paging or if `IA32_EFER.NXE = 0`, instructions may be fetched from any supervisor-mode address.
+   - For PAE paging or IA-32e paging with `IA32_EFER.NXE = 1`, instructions may be fetched from any supervisor-mode address with a translation where the `XD` flag (bit 63) is 0 in every paging-structure entry controlling the translation; instructions may not be fetched from any supervisor-mode address with a translation where the `XD` flag is 1 in any paging-structure entry controlling the translation.
+
+6. **Instruction Fetches from User-Mode Addresses**
+   - Access rights depend on the value of `CR4.SMEP`:
+     - If `CR4.SMEP = 0`, access rights depend on the paging mode and the value of `IA32_EFER.NXE`:
+       - For 32-bit paging or if `IA32_EFER.NXE = 0`, instructions may be fetched from any user-mode address.
+       - For PAE paging or IA-32e paging with `IA32_EFER.NXE = 1`, instructions may be fetched from any user-mode address with a translation where the `XD` flag is 0 in every paging-structure entry controlling the translation.
+     - If `CR4.SMEP = 1`, instructions may not be fetched from any user-mode address.
+
+---
+
+## User-Mode Accesses
+
+1. **Data Reads**
+   - Access rights depend on the mode of the linear address:
+     - Data may be read from any user-mode address with a protection key for which read access is permitted.
+     - Data may not be read from any supervisor-mode address.
+     - See Section 4.6.2 for how protection keys are associated with user-mode addresses and permitted accesses for each protection key.
+
+2. **Data Writes**
+   - Access rights depend on the mode of the linear address:
+     - Data may be written to any user-mode address with a translation where the `R/W` flag is 1 in every paging-structure entry controlling the translation and with a protection key for which write access is permitted.
+     - Data may not be written to any supervisor-mode address.
+
+3. **Instruction Fetches**
+   - Access rights depend on the mode of the linear address, the paging mode, and the value of `IA32_EFER.NXE`:
+     - For 32-bit paging or if `IA32_EFER.NXE = 0`, instructions may be fetched from any user-mode address.
+     - For PAE paging or IA-32e paging with `IA32_EFER.NXE = 1`, instructions may be fetched from any user-mode address with a translation where the `XD` flag is 0 in every paging-structure entry controlling the translation.
+     - Instructions may not be fetched from any supervisor-mode address.
+
+
+
+## Protection Keys
+
+当 **CR4.PKE = 1**，所有的线性地址都与页表结构门中的保护密钥位联系在一起，`PKRU`寄存器决定了每个密钥对应的用户模式地址是否是可读或者可写。
+
+当 **CR4.PKE = 0，或者 IA-32e 分页未激活**，则处理器不会将线性地址与保护密钥关联，也不会使用本节中描述的访问控制机制。在这两种情况下，中对具有保护密钥的用户模式地址的引用应被视为对任何用户模式地址的引用。
