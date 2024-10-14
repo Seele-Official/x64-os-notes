@@ -16,6 +16,8 @@
   - [Supervisor-Mode Accesses](#supervisor-mode-accesses)
   - [User-Mode Accesses](#user-mode-accesses)
   - [Protection Keys](#protection-keys)
+- [Page-Fault Error Code](#page-fault-error-code)
+- [PAT Page Attribute Table](#pat-page-attribute-table)
 ----
 
 # OVERVIEW
@@ -56,6 +58,7 @@
 | 12-63 | 页表基地址 (PML4 的物理地址) |
 
 - 页表基地址: 页表地址的 12-63 位，所以页表必须4kb对齐
+> **所有页表有关的结构体都必须4KB对齐！！！**
 
 
 ### PML4E Page Map Level 4 Entry
@@ -63,11 +66,11 @@
 | 位数    | 描述                                                                                                 |
 | ------- | ---------------------------------------------------------------------------------------------------- |
 | 0 (P)   | 存在位；必须为1以指向下一级页表                                                                      |
-| 1 (R/W) | 读/写；如果为0，可能不允许写入此条目指向的页表（见第4.6节）                                          |
-| 2 (U/S) | 用户/监督；如果为0，不允许用户模式访问此条目指向的页表（见第4.6节）                                  |
-| 3 (PWT) | 页级写通；间接确定访问此条目指向的页表时使用的内存类型（见第4.9.2节）                                |
-| 4 (PCD) | 页级缓存禁用；间接确定访问此条目指向的页表时使用的内存类型（见第4.9.2节）                            |
-| 5 (A)   | 访问位；指示软件是否已访问此条目指向的页表（见第4.8节）                                              |
+| 1 (R/W) | 读/写；如果为0，可能不允许写入此条目指向的页表(见[Access-accesses](#access-rights))                  |
+| 2 (U/S) | 用户/监督；如果为0，不允许用户模式访问此条目指向的页表(见[Access-accesses](#access-rights))          |
+| 3 (PWT) | 页级写通；或间接确定访问此条目指向的页表时使用的内存类型(见 [PAT](#pat-page-attribute-table) )       |
+| 4 (PCD) | 页级缓存禁用；或间接确定访问此条目指向的页表时使用的内存类型(见 [PAT](#pat-page-attribute-table) )   |
+| 5 (A)   | 访问位；指示软件是否已访问此条目指向的页表                                                           |
 | 11:6    | 保留（必须为0）                                                                                      |
 | 51:12   | 此条目指向的页目录表的物理地址                                                                       |
 | 62:52   | 忽略                                                                                                 |
@@ -87,14 +90,14 @@
 | 4 (PCD)  | 页级缓存禁用；间接确定访问此条目映射的1 GB页面时使用的内存类型（见第4.9.2节）    |
 | 5 (A)    | 访问位；指示软件是否已访问此条目映射的1 GB页面（见第4.8节）                      |
 | 6 (D)    | 脏位；指示软件是否已写入此条目映射的1 GB页面（见第4.8节）                        |
-| 7 (PS)   | 页大小；必须为1，否则此条目指向页目录表（见表4-16）                              |
+| 7 (PS)   | 页大小；必须为1，否则此条目指向页目录表                                          |
 | 8 (G)    | 全局位；如果 CR4.PGE = 1，确定此条目指向的页是否为全局页（见第4.10节），否则忽略 |
 | 11:9     | 忽略                                                                             |
 | 12 (PAT) | 间接确定访问此条目映射的1 GB页面时使用的内存类型（见第4.9.2节）                  |
 | 29:13    | 保留（必须为0）                                                                  |
 | 51:30    | 此条目映射的1 GB页面的物理地址                                                   |
 | 58:52    | 忽略                                                                             |
-| 62:59    | 保护密钥；如果 CR4.PKE = 1，确定页面的[保护密钥](#protection-keys)，否则忽略          |
+| 62:59    | 保护密钥；如果 CR4.PKE = 1，确定页面的[保护密钥](#protection-keys)，否则忽略     |
 | 63 (XD)  | 如果 IA32_EFER.NXE = 1，执行禁用；否则，保留（必须为0）                          |
 
 > PAT 在所有支持IA-32e paging的处理器中都被支持
@@ -109,7 +112,7 @@
 | 4 (PCD)  | 页级缓存禁用；间接确定访问此条目引用的页目录时使用的内存类型（见第4.9.2节）                            |
 | 5 (A)    | 访问位；指示此条目是否已用于线性地址翻译（见第4.8节）                                                  |
 | 6        | 忽略                                                                                                   |
-| 7 (PS)   | 页大小；必须为0，否则此条目映射一个1 GB页面（见表4-15）                                                |
+| 7 (PS)   | 页大小；必须为0，否则此条目映射一个1 GB页面                                                            |
 | 11:8     | 忽略                                                                                                   |
 | (M–1):12 | 此条目引用的4 KB对齐页目录的物理地址                                                                   |
 | 51:M     | 保留（必须为0）                                                                                        |
@@ -259,16 +262,24 @@
 
 # Access Rights
 
-一般来说，线性地址的访问权限有俩种，分别是`supervisor-mode access` 和 `user-mode access`.所有的指令请求和数据权限,都是由当前特权等级 `current privilege level (CPL)` 决定的。
+一般来说，线性地址的访问权限有俩种，分别是`Supervisor-mode access` 和 `User-mode access`.所有的指令请求和数据权限,都是由当前特权等级 `Current privilege level (CPL)` 决定的。
 
-- **CPL < 3**： supervisor-mode accesses
-- **CPL = 3**： user-mode accesses.
+- **CPL < 3**： Supervisor-mode accesses
+- **CPL = 3**： User-mode accesses.
 
-mplicit supervisor-mode accesses
 
-explicit supervisor-mode accesses
+有些操作会隐式地使用线性地址访问系统数据结构；无论当前权限级别CPL如何，对这些数据结构的访问结果会被当做监督模式访问。这类访问的例子包括：
+- 访问全局描述符表（GDT）或局部描述符表（LDT）以加载段描述符 
+- 在传递中断或异常时访问中断描述符表（IDT）
+- 以及在任务切换或 CPL 变更时访问任务状态段（TSS）
 
-如果至少一个分页结构条目中的 U/S 标志（位 2）为 0，则该地址为管理员模式地址。否则，该地址为用户模式地址。
+所有这些访问都被称为**隐式监督模式(mplicit supervisor-mode accesses)访问**，无论 CPL 为何。
+而在 CPL < 3 时进行的其他访问被称为**显式监督模式(explicit supervisor-mode accesses)访问**。
+
+
+
+
+如果至少一个分页结构条目中的 U/S 标志（位 2）为 0，则该地址为 Supervisor-mode access 地址。否则，该地址为 User-mode access 地址。
 
 下面给出分页模式如何确认访问权限的方式:
 ## Supervisor-Mode Accesses
@@ -313,8 +324,6 @@ explicit supervisor-mode accesses
        - For PAE paging or IA-32e paging with `IA32_EFER.NXE = 1`, instructions may be fetched from any user-mode address with a translation where the `XD` flag is 0 in every paging-structure entry controlling the translation.
      - If `CR4.SMEP = 1`, instructions may not be fetched from any user-mode address.
 
----
-
 ## User-Mode Accesses
 
 1. **Data Reads**
@@ -341,3 +350,67 @@ explicit supervisor-mode accesses
 当 **CR4.PKE = 1**，所有的线性地址都与页表结构门中的保护密钥位联系在一起，`PKRU`寄存器决定了每个密钥对应的用户模式地址是否是可读或者可写。
 
 当 **CR4.PKE = 0，或者 IA-32e 分页未激活**，则处理器不会将线性地址与保护密钥关联，也不会使用本节中描述的访问控制机制。在这两种情况下，中对具有保护密钥的用户模式地址的引用应被视为对任何用户模式地址的引用。
+
+PKRU（用户页面保护密钥权限）寄存器是一个32位寄存器，其格式如下：对于每个 i（0 ≤ i ≤ 15），PKRU[2i] 是保护密钥 i 的访问禁用位(ADi, access-disable bit)，PKRU[2i+1] 是保护密钥 i 的写入禁用位(WDi, write-disable bit)。
+
+软件可以使用 `RDPKRU` 和 `WRPKRU` 指令，并将 ECX 设置为 0 来读取和写入 PKRU。此外，PKRU 寄存器是 XSAVE-managed 的状态，因此也可以通过 XSAVE 指令集中的指令进行读取和写入。
+> 关于 XSAVE 指令集的更多信息，请参见《Intel® 64 和 IA-32 架构软件开发者手册》第一卷第 13 章“使用 XSAVE 特性集管理状态”。
+
+线性地址的保护密钥如何控制对该地址的访问取决于线性地址的模式：
+- 线性地址的保护仅控制对该地址的数据访问，不会影响从该地址获取指令。
+- 监督模式(supervisor-mode)下地址的保护密钥会被忽略，不会控制对该地址的数据访问。
+- 对于用户模式地址的保护密钥 i，其使用依赖于 PKRU 寄存器的值：
+  - 如果 ADi = 1，则不允许任何数据访问。
+  - 如果 WDi = 1，某些数据写入访问可能会被拒绝：
+    - 不允许用户模式写入访问。
+    - 如果 CR0.WP = 1，则不允许监督模式写入访问。如果 CR0.WP = 0，WDi 不会影响监督模式对具有保护密钥 i 的用户模式地址的写入访问。
+  
+
+
+# Page-Fault Error Code
+
+![](./src/Page-Fault%20Error%20Code.png)
+
+- **P 标志 (bit 0)**：  
+  如果线性地址没有对应的翻译（即分页结构条目中的 P 标志为 0），则该标志为 0。表示页不存在。
+  
+- **W/R 标志 (bit 1)**：  
+  如果引发页错误的访问是写操作，则该标志为 1；否则为 0。这个标志描述引发页错误的访问类型，而不是分页结构中指定的访问权限。
+  
+- **U/S 标志 (bit 2)**：  
+  如果用户模式访问引发了页错误，该标志为 1；如果是监督模式访问引发的错误，则为 0。这个标志描述引发页错误的访问类型，而不是分页结构中指定的访问权限。用户模式和监督模式的访问定义见第 4.6 节。
+  
+- **RSVD 标志 (bit 3)**：  
+  如果线性地址没有对应的翻译，且这是由于分页结构条目中的保留位被设置为 1，则该标志为 1。（因为在 P 标志为 0 的分页结构条目中不会检查保留位，所以只有当 P 标志为 1 时，RSVD 标志才可能被设置为 1。）
+  
+- **I/D 标志 (bit 4)**：  
+  如果引发页错误的访问是指令获取，并且满足以下条件之一：
+  1. CR4.SMEP = 1；
+  2. 或者 CR4.PAE = 1 且 IA32_EFER.NXE = 1，则该标志为 1，否则为 0。该标志描述引发页错误的访问类型，而不是分页结构中指定的访问权限。
+  
+- **PK 标志 (bit 5)**：  
+  如果满足以下条件，PK 标志为 1：
+  1. IA32_EFER.LMA = CR4.PKE = 1；
+  2. 引发页错误的是数据访问；
+  3. 线性地址是用户模式地址，并且该地址使用了某个保护密钥 i；
+  4. PKRU 寄存器中的 ADi = 1，或者满足以下所有条件：WDi = 1，访问是写操作，并且 CR0.WP = 1 或者该操作是用户模式访问。
+
+- **SGX 标志 (bit 15)**：  
+  如果异常与分页无关，并且是由于违反 SGX 特定的访问控制要求引发的，该标志为 1。因为这种违反只能在不存在普通页错误时发生，所以该标志只在 P 标志（bit 0）为 1、RSVD 标志（bit 3）和 PK 标志（bit 5）都为 0 时被设置为 1。
+
+# PAT Page Attribute Table
+如果支持 PAT，分页会与 PAT 和内存类型范围寄存器(Memory-type range registers, MTRRs) 共同决定内存类型，具体如 11.5.2.2 节的表 11-7 所述。
+
+PAT 是一个 64 位的 MSR（IA32_PAT，MSR 索引为 277H），包含 8 个 8 位条目。
+
+对于对物理地址的任何访问，表格将 MTRRs 指定的物理地址内存类型与从 PAT 中选择的内存类型结合起来。具体来说，它来自 PAT 的条目 i，其中 i 定义如下：
+
+- 对于 CR3 中地址的分页结构条目的访问（例如，使用 IA-32e 分页的 PML4 表）：
+  - 如果 IA-32e 分页中 CR4.PCIDE = 1，则 i = 0。
+  - 否则，i = 2\*PCD + PWT，PCD 和 PWT 的值来自 CR3。
+
+
+- 对于地址位于另一个 `分页结构条目Y` 的 `分页结构条目X` 的访问，i = 2\*PCD + PWT，PCD 和 PWT 的值来自 Y。
+
+- 对于线性地址转换后的物理地址的访问，i = 4\*PAT + 2\*PCD + PWT，PAT、PCD 和 PWT 的值分别来自相关的 PTE（如果转换使用 4-KB 页面）、相关的 PDE（如果转换使用 2-MB 或 4-MB 页面）或相关的 PDPTE（如果转换使用 1-GB 页面）。
+
